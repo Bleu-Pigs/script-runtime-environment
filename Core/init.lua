@@ -1,9 +1,6 @@
 local Core = {prototype = {}}
 Core.__index = Core.prototype
 
-local ModulesManager = {prototype = {}}
-ModulesManager.__index = ModulesManager.prototype
-
 local CachedModule = {prototype = {}}
 CachedModule.__index = CachedModule.prototype
 
@@ -30,4 +27,50 @@ function CachedModule.new(ModuleScript)
     self.Stopping = self._events.stopping.Event
 
     return self
+end
+
+local ModulesManager = {prototype = {}}
+ModulesManager.__index = ModulesManager.prototype
+
+function ModulesManager.new()
+    local self = setmetatable(
+        {
+            _cached = {}
+        },
+        ModulesManager
+    )
+
+    return self
+end
+
+function ModulesManager:load(ModuleScript)
+    if self._cached[ModuleScript.Name] then
+        return false, string.format(
+            "%s is already loaded",
+            ModuleScript.Name
+        )
+    end
+
+    local newCachedModule = CachedModule.new(ModuleScript)
+    self._cached[ModuleScript.Name] = newCachedModule
+
+    return true
+end
+
+function ModulesManager:unload(ModuleName)
+    if not self._cached[ModuleName] then
+        return false, string.format(
+            "%s is already unloaded",
+            ModuleName
+        )
+    end
+
+    local unloadingModule = self._cached[ModuleName]
+    self:Stop(ModuleName)
+    for key, value in next, unloadingModule do
+        unloadingModule[key] = nil
+    end
+    self._cached[ModuleName] = nil
+
+    return true
 end
