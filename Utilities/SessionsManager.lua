@@ -1,69 +1,70 @@
-local SessionsManager = {}
-local threadToSession = setmetatable(
-    {},
-    {
-        __mode = "k"
-    }
-)
+local SessionsManager = {prototype = {}}
+SessionsManager.__index = SessionsManager.prototype
 
-local objectSession = {prototype = {}}
+function SessionsManager.new()
+    local self = setmetatable(
+        {
+            _threadToSession = setmetatable({}, {__mode = "k"})
+        },
+        SessionsManager
+    )
 
-function SessionsManager.new(coroutineThread)
-    if threadToSession[coroutineThread] then
-        return false, string.format(
-            "%s is already registered to a Session"
-        )
-    end
+    return self
+end
 
+local Session = {prototype = {}}
+Session.__index = Session.prototype
+
+function SessionsManager:createSession()
     local newSession = setmetatable(
         {
-            _data = {},
-            _threads = setmetatable({}, {__mode = "v"})
+            _manager = self,
+            _thread = setmetatable({}, {__mode = "k"}),
+            _data = {}
         },
-        objectSession
+        Session
     )
-    threadToSession[coroutineThread] = newSession
 
     return newSession
 end
 
-function objectSession:addThread(coroutineThread)
+function Session:addThread(coroutineThread)
     if not coroutineThread then
         coroutineThread = coroutine.running()
     end
-    if threadToSession[coroutineThread] then
+    if self._manager._threadToSession[coroutineThread] then
         return false, string.format(
             "%s is already registered to a Session"
         )
     end
 
-    threadToSession[coroutineThread] = self
+    self._manager._threadToSession[coroutineThread] = self
     table.insert(self._threads, coroutineThread)
 
-    return true 
+    return true
 end
 
-function objectSession:removeThread(coroutineThread)
+function Session:removeThread(coroutineThread)
     if not coroutineThread then
         coroutineThread = coroutine.running()
     end
-    if not threadToSession[coroutineThread] then
+    if not self._manager._threadToSession[coroutineThread] then
         return false, string.format(
             "%s is not associated to a Session"
         )
     end
 
-    threadToSession[coroutineThread] = nil
+    self._manager._threadToSession[coroutineThread] = nil
     table.remove(self._threads, table.find(self._threads, coroutineThread))
 
     return true
 end
 
-function objectSession:destroy()
-    for key, thread in next, self._threads do
-        threadToSession[thread] = nil
+function Session:destroy()
+    for _, thread in next, self._threads do
+        self._manager._threadToSession[thread] = nil
     end
-    for key, value in next, self do
+    for key, _ in next, self do
         self[key] = nil
     end
     self = nil
@@ -71,7 +72,4 @@ function objectSession:destroy()
     return true
 end
 
-return SessionsManager
-
-
-
+return SessionsManager.new
