@@ -1,3 +1,5 @@
+return function(api, Core)
+
 local SessionsManager = {prototype = {}}
 SessionsManager.__index = SessionsManager.prototype
 
@@ -72,4 +74,8 @@ function Session:destroy()
     return true
 end
 
-return SessionsManager.new
+api.new = SessionsManager.new
+end,
+function(api)
+
+end
