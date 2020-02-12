@@ -1,5 +1,4 @@
-local Core = {prototype = {}}
-Core.__index = Core.prototype
+local Core = {}
 
 local CachedModule = {prototype = {}}
 CachedModule.__index = CachedModule.prototype
@@ -74,3 +73,54 @@ function ModulesManager:unload(ModuleName)
 
     return true
 end
+
+function ModulesManager:Start(ModuleName, ...)
+    if not self._cached[ModuleName] then 
+        return false, string.format(
+            "%s is not loaded",
+            ModuleName
+        )
+    end
+
+    local startingModule = self._cached[ModuleName]
+
+    if startingModule._thread then
+        if coroutine.status(startingModule._thread) ~= "dead" then
+            return false, string.format(
+                "%s is already running",
+                startingModule._safeModule.Name
+            )
+        end
+    end
+
+    spawn(
+        function()
+            startingModule._thread = coroutine.running()
+            startingModule._controller.start(startingModule._api, Core, ...)
+            Core[startingModule._safeModule.Name] = startingModule._api
+            startingModule._events.started:Fire()
+        end
+    )
+    return true
+end
+
+function ModulesManager:Stop(...)
+    if not self._cached[ModuleName] then 
+        return false, string.format(
+            "%s is not loaded",
+            ModuleName
+        )
+    end
+
+    local stoppingModule = self._cached[ModuleName]
+
+    stoppingModule._controller.stop(...)
+    for key, value in next, stoppingModule._api do
+        stoppingModule._api[key] = nil
+    end
+
+    return true
+end
+
+Core.ModulesManager = ModulesManager.new()
+return Core
