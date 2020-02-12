@@ -1,96 +1,126 @@
-local ModulesManager = {}
-do
-    local loadedModules = {}
-    local objectModule = {prototype = {}}
-    objectModule.__index = objectModule.prototype
+local Core = {}
 
-    function ModulesManager:load(ModuleScript)
-        if loadedModules[ModuleScript.Name] then
-            return false, string.format(
-                "%s is already loaded into ModulesManager",
-                ModuleScript.Name
-            )
-        end
+local CachedModule = {prototype = {}}
+CachedModule.__index = CachedModule.prototype
 
-        local newModuleObject = setmetatable(
-            {
-                _module = ModuleScript:clone(),
-                _api = {}
-            },
-            objectModule
-        )
-        
-        newModuleObject.started = newModuleObject._bindableStarted.Event
-        newModuleObject.stopping = newModuleObject._bindableStopping.Event
-        local controller = {require(newModuleObject._module:clone())}
-        newModuleObject._controller = {
-            start = controller[1],
-            stop = controller[2]
-        } 
-        loadedModules[ModuleScript.Name] = newModuleObject
-        return true
-    end
+function CachedModule.new(ModuleScript)
+    ModuleScript.Archivable = true
+    local self = setmetatable(
+        {   
+            -- clone the module so there's reduced risk of Modification
+            _safeModule = ModuleScript:Clone(),
+            _api = {},
+            _controller = {},
+            _events = {}
+        },
+        CachedModule
+    )
 
-    function ModulesManager:unload(stringNameOfModule)
-        local unloadingModule = loadedModules[stringNameOfModule]
-        if not unloadingModule then
-            return false, string.format(
-                "%s is already unloaded from ModulesManager",
-                stringNameOfModule.Name
-            )
-        end
+    local requiredController = {require(self._safeModule)}
+    self._controller.start = requiredController[1]
+    self._controller.stop = requiredController[2]
 
-        ModulesManager:stop(stringNameOfModule)
-        unloadingModule._bindableStarted:destroy()
-        unloadingModule._bindableStopping:destroy()
-        unloadingModule._controller.start = nil
-        unloadingModule._controller.stop = nil 
-    
-        return true
-    end
+    self._events.started = Instance.new("BindableEvent", self._safeModule)
+    self._events.stopping = Instance.new("BindableEvent", self._safeModule)
+    self.Started = self._events.started.Event
+    self.Stopping = self._events.stopping.Event
 
-    function ModulesManager:start(stringNameOfModule, ...)
-        local moduleData = loadedModules[stringNameOfModule]
-        if not moduleData then
-            return false, string.format(
-                "%s is not a loaded Module",
-                stringNameOfModule
-            )
-        end
-
-        moduleData._thread = coroutine.create(moduleData._controller.start)
-        local response = {coroutine.resume(moduleData._thread, moduleData._api, ...)}
-        if response[1] then
-            moduleData._bindableStarted:fire(moduleData._api)
-        end
-        return unpack(response)
-    end
-
-    function ModulesManager:stop(stringNameOfModule, ...)
-        local moduleData = loadedModules[stringNameOfModule]
-        if not moduleData then
-            return false, string.format(
-                "%s is not a loaded Module",
-                stringNameOfModule
-            )
-        end
-
-        moduleData._bindableStopping:fire()
-        return coroutine.resume(
-            coroutine.create(
-                function()
-                    local success, failureReason = pcall(moduleData._controller.stop)
-                    for key, value in next, moduleData._api do
-                        moduleData._api[key] = nil
-                    end
-                    return success, failureReason
-                end
-            )
-        )
-    end
+    return self
 end
 
-local Core = {
-    ModulesManager = ModulesManager
-}
+local ModulesManager = {prototype = {}}
+ModulesManager.__index = ModulesManager.prototype
+
+function ModulesManager.new()
+    local self = setmetatable(
+        {
+            _cached = {}
+        },
+        ModulesManager
+    )
+
+    return self
+end
+
+function ModulesManager:load(ModuleScript)
+    if self._cached[ModuleScript.Name] then
+        return false, string.format(
+            "%s is already loaded",
+            ModuleScript.Name
+        )
+    end
+
+    local newCachedModule = CachedModule.new(ModuleScript)
+    self._cached[ModuleScript.Name] = newCachedModule
+
+    return true
+end
+
+function ModulesManager:unload(ModuleName)
+    if not self._cached[ModuleName] then
+        return false, string.format(
+            "%s is already unloaded",
+            ModuleName
+        )
+    end
+
+    local unloadingModule = self._cached[ModuleName]
+    self:Stop(ModuleName)
+    for key, value in next, unloadingModule do
+        unloadingModule[key] = nil
+    end
+    self._cached[ModuleName] = nil
+
+    return true
+end
+
+function ModulesManager:Start(ModuleName, ...)
+    if not self._cached[ModuleName] then 
+        return false, string.format(
+            "%s is not loaded",
+            ModuleName
+        )
+    end
+
+    local startingModule = self._cached[ModuleName]
+
+    if startingModule._thread then
+        if coroutine.status(startingModule._thread) ~= "dead" then
+            return false, string.format(
+                "%s is already running",
+                startingModule._safeModule.Name
+            )
+        end
+    end
+
+    spawn(
+        function()
+            startingModule._thread = coroutine.running()
+            startingModule._controller.start(startingModule._api, Core, ...)
+            Core[startingModule._safeModule.Name] = startingModule._api
+            startingModule._events.started:Fire()
+        end
+    )
+    return true
+end
+
+function ModulesManager:Stop(...)
+    if not self._cached[ModuleName] then 
+        return false, string.format(
+            "%s is not loaded",
+            ModuleName
+        )
+    end
+
+    local stoppingModule = self._cached[ModuleName]
+
+    stoppingModule._controller.stop(...)
+    for key, value in next, stoppingModule._api do
+        stoppingModule._api[key] = nil
+    end
+
+    return true
+end
+
+Core.ModulesManager = ModulesManager.new()
 return Core
