@@ -6,7 +6,7 @@ CachedModule.__index = CachedModule.prototype
 function CachedModule.new(ModuleScript)
     ModuleScript.Archivable = true
     local self = setmetatable(
-        {   
+        {
             -- clone the module so there's reduced risk of Modification
             _safeModule = ModuleScript:Clone(),
             _api = {},
@@ -66,7 +66,7 @@ function ModulesManager:unload(ModuleName)
 
     local unloadingModule = self._cached[ModuleName]
     self:Stop(ModuleName)
-    for key, value in next, unloadingModule do
+    for key in next, unloadingModule do
         unloadingModule[key] = nil
     end
     self._cached[ModuleName] = nil
@@ -75,7 +75,7 @@ function ModulesManager:unload(ModuleName)
 end
 
 function ModulesManager:Start(ModuleName, ...)
-    if not self._cached[ModuleName] then 
+    if not self._cached[ModuleName] then
         return false, string.format(
             "%s is not loaded",
             ModuleName
@@ -93,19 +93,18 @@ function ModulesManager:Start(ModuleName, ...)
         end
     end
 
-    spawn(
-        function()
-            startingModule._thread = coroutine.running()
+    startingModule._thread = coroutine.create(
+        function(...)
             startingModule._controller.start(startingModule._api, Core, ...)
             Core[startingModule._safeModule.Name] = startingModule._api
             startingModule._events.started:Fire()
         end
     )
-    return true
+    return coroutine.resume(startingModule._thread, ...)
 end
 
-function ModulesManager:Stop(...)
-    if not self._cached[ModuleName] then 
+function ModulesManager:Stop(ModuleName, ...)
+    if not self._cached[ModuleName] then
         return false, string.format(
             "%s is not loaded",
             ModuleName
@@ -115,7 +114,7 @@ function ModulesManager:Stop(...)
     local stoppingModule = self._cached[ModuleName]
 
     stoppingModule._controller.stop(...)
-    for key, value in next, stoppingModule._api do
+    for key, _ in next, stoppingModule._api do
         stoppingModule._api[key] = nil
     end
 
