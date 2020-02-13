@@ -1,14 +1,14 @@
-return function(api, Core)
+return function(api)
 
-local SessionsManager = {prototype = {}}
-SessionsManager.__index = SessionsManager.prototype
+api.prototype = {}
+api.__index = api.prototype
 
-function SessionsManager.new()
+function api.new()
     local self = setmetatable(
         {
             _threadToSession = setmetatable({}, {__mode = "k"})
         },
-        SessionsManager
+        api
     )
 
     return self
@@ -17,7 +17,7 @@ end
 local Session = {prototype = {}}
 Session.__index = Session.prototype
 
-function SessionsManager:createSession()
+function api:createSession()
     local newSession = setmetatable(
         {
             _manager = self,
@@ -74,7 +74,6 @@ function Session:destroy()
     return true
 end
 
-api.new = SessionsManager.new
 end,
 function(api)
 
