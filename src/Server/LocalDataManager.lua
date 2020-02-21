@@ -18,14 +18,14 @@ local REQUEST_TYPES = {
 local ManagedLocalData = {prototype = {}}
 ManagedLocalData.__index = ManagedLocalData.prototype
 
+
 local managedDataStores = {}
 local queuedRequests = {}
 
 function ManagedLocalData.new(Name)
     local self = setmetatable(
         {
-            _dataStore = DataStoreService:GetDataStore(Name, DATASTORE_SECURITY_KEY),
-            _dataStoreBackup = DataStoreService:GetOrderedDataStore(Name, DATASTORE_SECURITY_KEY),
+            _dataStoreName = Name,
             _dataBuffer = {}
         },
         ManagedLocalData
@@ -36,19 +36,12 @@ function ManagedLocalData.new(Name)
 end
 
 local QueuedRequest = {}
-function QueuedRequest.new(RequestingDataStore, DataStoreBackup, RequestType, Index, Value)
+function QueuedRequest.new(DataStoreName, RequestType, Index, Value)
     assert(
-        t.Instance(RequestingDataStore),
+        t.string(DataStoreName),
         string.format(
-            "bad argument #1 (expecting Instance, got %s)",
-            typeof(RequestingDataStore)
-        )
-    )
-    assert(
-        RequestingDataStore:IsA("GlobalDataStore"),
-        string.format(
-            "bad argument #1 (expecting Class GlobalDataStore, got %s)",
-            RequestingDataStore.ClassName
+            "bad argument #1 (expecting string, got %s)",
+            typeof(DataStoreName)
         )
     )
     assert(
@@ -59,13 +52,20 @@ function QueuedRequest.new(RequestingDataStore, DataStoreBackup, RequestType, In
             REQUEST_TYPES.ONUPDATE
         )(RequestType),
         string.format(
-            "bad argument #1 (expecting REQUEST_TYPES Enum, got %s)",
+            "bad argument #2 (expecting REQUEST_TYPES Enum, got %s)",
             typeof(RequestType)
+        )
+    )
+    assert(
+        t.string(Index),
+        string.format(
+            "bad argument #3 (expecting string, got %s)",
+            typeof(Index)
         )
     )
 
     local request = {
-        RequestingDataStore,
+        DataStoreName,
         RequestType,
         Index,
         Value,
@@ -181,6 +181,7 @@ spawn(
     function()
         -- TODO: implement OnClose handler logic
         local request, response
+        local dataStore, dataStoreBackup
         while true do
             if #queuedRequests > 0 then
                 request = table.remove(queuedRequests, 1)
@@ -189,23 +190,69 @@ spawn(
                     request[6] = "request failed more than 3 times"
                     request[5] = true
                 else
+                    dataStore = DataStoreService:GetDataStore(request[1], DATASTORE_SECURITY_KEY)
+                    dataStoreBackup = DataStoreService:GetOrderedDataStore(request[1] .. "_Backup", DATASTORE_SECURITY_KEY)
+
                     if request[2] == REQUEST_TYPES.GET then
-                        response = {pcall(request[1].GetAsync, request[1], request[3])}
+                        response = {
+                            pcall(
+                                function()
+                                    local response = dataStore:GetAsync(request[3])
+                                    if t.table(response) then
+                                        return response[2]
+                                    end
+                                end
+                            )
+                        }
                     elseif request[2] == REQUEST_TYPES.SET then
                         response = {
                             pcall(
-                                request[1].UpdateAsync,
-                                request[1],
-                                request[3],
                                 function()
+                                    dataStore:UpdateAsync(
+                                        request[3],
+                                        function(oldData)
+                                            local timesChanged = 1
+                                            dataStoreBackup = DataStoreService:GetOrderedDataStore(request[3] .."_".. request[3] .."_Backup")
+
+                                            if t.table(oldData) and t.number(oldData[2]) then
+                                                timesChanged = oldData[2] + 1
+                                                dataStoreBackup:SetAsync(timesChanged, oldData)
+                                            end
+
+                                            return {
+                                                request[4],
+                                                timesChanged
+                                            }
+                                        end
+                                    )
+
                                     return request[4]
                                 end
                             )
                         }
                     elseif request[2] == REQUEST_TYPES.UPDATE then
-                        response = {pcall(request[1].GetAsync, request[1], request[3], request[4])}
+                        response = {
+                            pcall(
+                                function()
+                                    return dataStore:UpdateAsync(
+                                        request[3],
+                                        function(oldData)
+                                            local timesChanged = 1
+                                            dataStoreBackup = DataStoreService:GetOrderedDataStore(request[3] .."_".. request[3] .."_Backup")
+                                            
+                                            if t.table(oldData) and t.number(oldData[2]) then
+                                                timesChanged = oldData[2] + 1
+                                                dataStoreBackup:SetAsync(timesChanged, oldData)
+                                            end
+
+                                            return request[4](oldData)
+                                        end
+                                    )
+                                end
+                            )
+                        }
                     elseif request[2] == REQUEST_TYPES.ONUPDATE then
-                        response = {pcall(request[1].GetAsync, request[1], request[3], request[4])}
+                        response = {pcall(request[1].OnUpdate, request[1], request[3], request[4])}
                     end
 
                     if not response[1] then
