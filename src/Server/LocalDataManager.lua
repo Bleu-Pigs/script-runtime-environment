@@ -183,6 +183,7 @@ spawn(
         -- TODO: implement OnClose handler logic
         local request, response
         local dataStore, dataStoreBackup
+        local timeSinceLastYield = os.time()
         while true do
             if #queuedRequests > 0 then
                 request = table.remove(queuedRequests, 1)
@@ -267,6 +268,11 @@ spawn(
                         request[5] = true
                     end
                 end
+            end
+
+            if os.time() > timeSinceLastYield then
+                wait(1)
+                timeSinceLastYield = os.time() + 1
             end
         end
     end
