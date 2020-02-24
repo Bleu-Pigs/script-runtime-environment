@@ -1,14 +1,12 @@
 --[[
+    Goals:
+    - Create unified data management between Local and Roaming data profiles
 ]]
 
 local LocalDataManager = require(script.Parent.LocalDataManager)
-local Utilities = require(script.Parent.Core.Utilities)
-local Create = Utilities.Create
-local Get = Utilities.Get
-local Promise = require(script.Parent.Core.Promises)
 local t = require(script.Parent.Core.t)
 
-local UserDataStore = LocalDataManager:Get("Users")
+local UsersLocalData = LocalDataManager:Get("Users")
 
 local usersCached = setmetatable({}, {__index = "k"})
 
@@ -34,8 +32,8 @@ function User.new(Player)
     local self = setmetatable(
         {
             _instance = Player,
-            _roamingData = {}
-            _localData = UserDataStore:GetAsync(Player.userId):expect() or {}
+            _roamingData = {},
+            _localData = UsersLocalData:GetAsync(Player.userId):expect() or {}
         },
         User
     )
@@ -59,4 +57,26 @@ end
 
 function User.prototype:GetLocal(Index)
     return self._localData[Index]
+end
+
+local Users = {}
+
+function Users:Get(Player)
+    assert(
+        self == Users,
+        "Expected ':' not '.' calling member function Get"
+    )
+    assert(
+        t.Instance(Player),
+        string.format(
+            "bad argument #1 (expecting Instance, got %s)",
+            typeof(Player)
+        )
+    )
+
+    if usersCached[Player] then
+        return usersCached[Player]
+    end
+
+    return User.new(Player)
 end
