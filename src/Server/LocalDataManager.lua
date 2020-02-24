@@ -1,11 +1,9 @@
-local Utilities = require(script.Parent.Core.Utilities)
-local Create = Utilities.Create
-local Get = Utilities.Get
-local Promise = require(script.Parent.Core.Promises)
-local t = require(script.Parent.Core.t)
+local Core = require(script.Parent:WaitForChild("Core"))
+local Get = Core.Utilities.Get
+local Promise = Core.Promise
+local t = Core.t
 
 local DataStoreService = Get("DataStoreService")
-local RunService = Get("RunService")
 
 local DATASTORE_SECURITY_KEY = "some random key here"
 local REQUEST_TYPES = {
@@ -15,27 +13,10 @@ local REQUEST_TYPES = {
     ONUPDATE = newproxy()
 }
 
-local ManagedLocalData = {prototype = {}}
-ManagedLocalData.__index = ManagedLocalData.prototype
+local QueuedRequest = {}
 
-
-local managedDataStores = {}
 local queuedRequests = {}
 
-function ManagedLocalData.new(Name)
-    local self = setmetatable(
-        {
-            _dataStoreName = Name,
-            _dataBuffer = {}
-        },
-        ManagedLocalData
-    )
-    managedDataStores[Name] = self
-
-    return self
-end
-
-local QueuedRequest = {}
 function QueuedRequest.new(DataStoreName, RequestType, Index, Value)
     assert(
         t.string(DataStoreName),
@@ -115,66 +96,86 @@ function QueuedRequest.new(DataStoreName, RequestType, Index, Value)
     )
 end
 
-function ManagedLocalData.prototype:GetAsync(Index)
-    assert(
-        t.string(Index),
-        string.format(
-            "bad argument #1 (expecting string, got %s)",
-            typeof(Index)
+local ManagedLocalData = {prototype = {}}
+ManagedLocalData.__index = ManagedLocalData.prototype
+
+local managedDataStores = {}
+
+do
+    function ManagedLocalData.new(Name)
+        local self = setmetatable(
+            {
+                _dataStoreName = Name,
+                _dataBuffer = {}
+            },
+            ManagedLocalData
         )
-    )
+        managedDataStores[Name] = self
 
-    return QueuedRequest.new(self._dataStore, REQUEST_TYPES.GET, Index)
-end
+        return self
+    end
 
-function ManagedLocalData.prototype:SetAsync(Index, Value)
-    assert(
-        t.string(Index),
-        string.format(
-            "bad argument #1 (expecting string, got %s)",
-            typeof(Index)
+    function ManagedLocalData.prototype:GetAsync(Index)
+        assert(
+            t.string(Index),
+            string.format(
+                "bad argument #1 (expecting string, got %s)",
+                typeof(Index)
+            )
         )
-    )
 
-    return QueuedRequest.new(self._dataStore, REQUEST_TYPES.GET, Index, Value)
-end
+        return QueuedRequest.new(self._dataStore, REQUEST_TYPES.GET, Index)
+    end
 
-function ManagedLocalData.prototype:UpdateAsync(Index, Callback)
-    assert(
-        t.string(Index),
-        string.format(
-            "bad argument #1 (expecting string, got %s)",
-            typeof(Index)
+    function ManagedLocalData.prototype:SetAsync(Index, Value)
+        assert(
+            t.string(Index),
+            string.format(
+                "bad argument #1 (expecting string, got %s)",
+                typeof(Index)
+            )
         )
-    )
-    assert(
-        t.callback(Callback),
-        string.format(
-            "bad argument #1 (expecting function, got %s)",
-            typeof(Callback)
-        )
-    )
 
-    return QueuedRequest.new(self._dataStore, REQUEST_TYPES.GET, Index, Callback)
-end
+        return QueuedRequest.new(self._dataStore, REQUEST_TYPES.GET, Index, Value)
+    end
 
-function ManagedLocalData.prototype:OnUpdate(Index, Callback)
-    assert(
-        t.string(Index),
-        string.format(
-            "bad argument #1 (expecting string, got %s)",
-            typeof(Index)
+    function ManagedLocalData.prototype:UpdateAsync(Index, Callback)
+        assert(
+            t.string(Index),
+            string.format(
+                "bad argument #1 (expecting string, got %s)",
+                typeof(Index)
+            )
         )
-    )
-    assert(
-        t.callback(Callback),
-        string.format(
-            "bad argument #1 (expecting function, got %s)",
-            typeof(Callback)
+        assert(
+            t.callback(Callback),
+            string.format(
+                "bad argument #1 (expecting function, got %s)",
+                typeof(Callback)
+            )
         )
-    )
 
-    return QueuedRequest.new(self._dataStore, self._dataStoreBackup, REQUEST_TYPES.GET, Index, Callback)
+        return QueuedRequest.new(self._dataStore, REQUEST_TYPES.GET, Index, Callback)
+    end
+
+    function ManagedLocalData.prototype:OnUpdate(Index, Callback)
+        assert(
+            t.string(Index),
+            string.format(
+                "bad argument #1 (expecting string, got %s)",
+                typeof(Index)
+            )
+        )
+        assert(
+            t.callback(Callback),
+            string.format(
+                "bad argument #1 (expecting function, got %s)",
+                typeof(Callback)
+            )
+        )
+
+        return QueuedRequest.new(self._dataStore, self._dataStoreBackup, REQUEST_TYPES.GET, Index, Callback)
+    end
 end
 
 spawn(
@@ -239,13 +240,17 @@ spawn(
                                         function(oldData)
                                             local timesChanged = 1
                                             dataStoreBackup = DataStoreService:GetOrderedDataStore(request[3] .."_".. request[3] .."_Backup")
-                                            
+
                                             if t.table(oldData) and t.number(oldData[2]) then
                                                 timesChanged = oldData[2] + 1
                                                 dataStoreBackup:SetAsync(timesChanged, oldData)
                                             end
 
-                                            return request[4](oldData)
+                                            local response = request[4](oldData)
+                                            return {
+                                                response,
+                                                timesChanged
+                                            }
                                         end
                                     )
                                 end
@@ -267,23 +272,23 @@ spawn(
     end
 )
 
-local LocalDataManager = {}
-
-function LocalDataManager:Get(Name)
-    assert(t.literal(LocalDataManager)(self), "Expected ':' not '.' calling member function Get")
-    assert(
-        t.string(Name),
-        string.format(
-            "bad argument #1 (expecting string, got %s)",
-            typeof(Name)
+local LocalDataManager = {} do
+    function LocalDataManager:Get(Name)
+        assert(self == LocalDataManager, "Expected ':' not '.' calling member function Get")
+        assert(
+            t.string(Name),
+            string.format(
+                "bad argument #1 (expecting string, got %s)",
+                typeof(Name)
+            )
         )
-    )
 
-    if managedDataStores[Name] then
-        return managedDataStores[Name]
+        if managedDataStores[Name] then
+            return managedDataStores[Name]
+        end
+
+        return ManagedLocalData.new(Name)
     end
-
-    return ManagedLocalData.new(Name)
 end
 
 return LocalDataManager

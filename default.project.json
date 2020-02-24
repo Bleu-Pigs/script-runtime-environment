@@ -31,7 +31,10 @@
     "ServerScriptService": {
       "$className": "ServerScriptService",
       "Server": {
-        "$path": "src/Server"
+        "$path": "src/Server",
+        "Core": {
+          "$path": "src/Core"
+        }
       }
     },
     "ReplicatedFirst": {

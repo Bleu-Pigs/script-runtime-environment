@@ -1,4 +1,5 @@
 local Utilities = {}
+local t = require(script.Parent:WaitForChild("t"))
 
 do
     local cache = setmetatable({}, {__mode = "v"})
@@ -7,13 +8,13 @@ do
             return cache[Name]
         end
 
-        assert(api.t.string(Name), "Expecting string, got ".. typeof(Name))
-        if not api.t.Instance(BeginAt) then 
+        assert(t.string(Name), "Expecting string, got ".. typeof(Name))
+        if not t.Instance(BeginAt) then 
             BeginAt = game
         end
 
         local result = game:GetService(Name)
-        if not api.t.Instance(result) then
+        if not t.Instance(result) then
             result = BeginAt:FindFirstChild(Name, true)
         end
         cache[Name] = result

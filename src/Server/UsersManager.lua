@@ -3,8 +3,9 @@
     - Create unified data management between Local and Roaming data profiles
 ]]
 
-local LocalDataManager = require(script.Parent.LocalDataManager)
-local t = require(script.Parent.Core.t)
+local Core = require(script.Parent.Core)
+local LocalDataManager = Core.LocalDataManager
+local t = Core.t
 
 local UsersLocalData = LocalDataManager:Get("Users")
 
@@ -57,6 +58,10 @@ end
 
 function User.prototype:GetLocal(Index)
     return self._localData[Index]
+end
+
+function User.prototype:GetPlayer()
+    return self._instance
 end
 
 local Users = {}
