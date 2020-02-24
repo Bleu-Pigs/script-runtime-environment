@@ -64,11 +64,11 @@ function User.prototype:GetPlayer()
     return self._instance
 end
 
-local Users = {}
+local UsersManager = {}
 
-function Users:Get(Player)
+function UsersManager:Get(Player)
     assert(
-        self == Users,
+        self == UsersManager,
         "Expected ':' not '.' calling member function Get"
     )
     assert(
@@ -85,3 +85,5 @@ function Users:Get(Player)
 
     return User.new(Player)
 end
+
+return UsersManager
