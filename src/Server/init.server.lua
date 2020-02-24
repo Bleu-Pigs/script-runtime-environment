@@ -21,3 +21,5 @@ Server.Utilities.Get("Players").PlayerRemoving:connect(
         print(leavingPlayer, "has left the Game!")
     end
 )
+
+print("Server is ready")

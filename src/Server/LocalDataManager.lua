@@ -37,13 +37,6 @@ function QueuedRequest.new(DataStoreName, RequestType, Index, Value)
             typeof(RequestType)
         )
     )
-    assert(
-        t.string(Index),
-        string.format(
-            "bad argument #3 (expecting string, got %s)",
-            typeof(Index)
-        )
-    )
 
     local request = {
         DataStoreName,
@@ -116,41 +109,17 @@ do
     end
 
     function ManagedLocalData.prototype:GetAsync(Index)
-        assert(
-            t.string(Index),
-            string.format(
-                "bad argument #1 (expecting string, got %s)",
-                typeof(Index)
-            )
-        )
-
         return QueuedRequest.new(self._dataStore, REQUEST_TYPES.GET, Index)
     end
 
     function ManagedLocalData.prototype:SetAsync(Index, Value)
-        assert(
-            t.string(Index),
-            string.format(
-                "bad argument #1 (expecting string, got %s)",
-                typeof(Index)
-            )
-        )
-
         return QueuedRequest.new(self._dataStore, REQUEST_TYPES.GET, Index, Value)
     end
 
-    function ManagedLocalData.prototype:UpdateAsync(Index, Callback)
-        assert(
-            t.string(Index),
-            string.format(
-                "bad argument #1 (expecting string, got %s)",
-                typeof(Index)
-            )
-        )
-        assert(
+    function ManagedLocalData.prototype:UpdateAsync(Index, Callback)ert(
             t.callback(Callback),
             string.format(
-                "bad argument #1 (expecting function, got %s)",
+                "bad argument #2 (expecting function, got %s)",
                 typeof(Callback)
             )
         )
@@ -160,16 +129,9 @@ do
 
     function ManagedLocalData.prototype:OnUpdate(Index, Callback)
         assert(
-            t.string(Index),
-            string.format(
-                "bad argument #1 (expecting string, got %s)",
-                typeof(Index)
-            )
-        )
-        assert(
             t.callback(Callback),
             string.format(
-                "bad argument #1 (expecting function, got %s)",
+                "bad argument #2 (expecting function, got %s)",
                 typeof(Callback)
             )
         )
@@ -214,7 +176,9 @@ spawn(
                                         request[3],
                                         function(oldData)
                                             local timesChanged = 1
-                                            dataStoreBackup = DataStoreService:GetOrderedDataStore(request[3] .."_".. request[3] .."_Backup")
+                                            dataStoreBackup = DataStoreService:GetOrderedDataStore(
+                                                request[1] .."_".. tostring(request[3]) .."_Backup"
+                                            )
 
                                             if t.table(oldData) and t.number(oldData[2]) then
                                                 timesChanged = oldData[2] + 1
@@ -240,7 +204,9 @@ spawn(
                                         request[3],
                                         function(oldData)
                                             local timesChanged = 1
-                                            dataStoreBackup = DataStoreService:GetOrderedDataStore(request[3] .."_".. request[3] .."_Backup")
+                                            dataStoreBackup = DataStoreService:GetOrderedDataStore(
+                                                request[1] .."_".. tostring(request[3]) .."_Backup"
+                                            )
 
                                             if t.table(oldData) and t.number(oldData[2]) then
                                                 timesChanged = oldData[2] + 1
