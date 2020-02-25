@@ -1,4 +1,5 @@
 local Core = require(script.Parent:WaitForChild("Core"))
+local Create = Core.Utilities.Create
 local Get = Core.Utilities.Get
 local Promise = Core.Promise
 local t = Core.t
@@ -43,48 +44,18 @@ function QueuedRequest.new(DataStoreName, RequestType, Index, Value)
         RequestType,
         Index,
         Value,
-        false,
-        nil,
+        Create(
+            "BindableEvent",
+            {
+                Parent = script
+            }
+        ),
         0
     }
 
     return Promise.async(
         function(resolve, reject, onCancel)
-            local isCancelled
-            onCancel(
-                function()
-                    table.remove(
-                        queuedRequests,
-                        table.find(
-                            queuedRequests,
-                            request
-                        )
-                    )
-                    isCancelled = true
-                end
-            )
-
-            local timeStarted = os.time() + 30
-            while not isCancelled do
-                if os.time() > timeStarted then
-                    table.remove(
-                        queuedRequests,
-                        table.find(
-                            queuedRequests,
-                            request
-                        )
-                    )
-                    reject(
-                        "The request was not processed in a timely manner"
-                    )
-                else
-                    if request[5] then
-                        resolve(request[6])
-                        return
-                    end
-                    wait(1)
-                end
-            end
+            resolve(request[5].Event:Wait())
         end
     )
 end
@@ -109,11 +80,11 @@ do
     end
 
     function ManagedLocalData.prototype:GetAsync(Index)
-        return QueuedRequest.new(self._dataStore, REQUEST_TYPES.GET, Index)
+        return QueuedRequest.new(self._dataStoreName, REQUEST_TYPES.GET, Index)
     end
 
     function ManagedLocalData.prototype:SetAsync(Index, Value)
-        return QueuedRequest.new(self._dataStore, REQUEST_TYPES.GET, Index, Value)
+        return QueuedRequest.new(self._dataStoreName, REQUEST_TYPES.GET, Index, Value)
     end
 
     function ManagedLocalData.prototype:UpdateAsync(Index, Callback)ert(
@@ -124,7 +95,7 @@ do
             )
         )
 
-        return QueuedRequest.new(self._dataStore, REQUEST_TYPES.GET, Index, Callback)
+        return QueuedRequest.new(self._dataStoreName, REQUEST_TYPES.GET, Index, Callback)
     end
 
     function ManagedLocalData.prototype:OnUpdate(Index, Callback)
@@ -136,7 +107,7 @@ do
             )
         )
 
-        return QueuedRequest.new(self._dataStore, self._dataStoreBackup, REQUEST_TYPES.GET, Index, Callback)
+        return QueuedRequest.new(self._dataStoreName, self._dataStoreNameBackup, REQUEST_TYPES.GET, Index, Callback)
     end
 end
 
@@ -149,13 +120,12 @@ spawn(
         while true do
             if #queuedRequests > 0 then
                 request = table.remove(queuedRequests, 1)
+                print("processing request", request)
 
-                if request[7] > 3 then
-                    request[6] = "request failed more than 3 times"
-                    request[5] = true
+                if request[6] > 3 then
+                    request[5]:Fire("request was unable to process after three attempts")
                 else
                     dataStore = DataStoreService:GetDataStore(request[1], DATASTORE_SECURITY_KEY)
-                    dataStoreBackup = DataStoreService:GetOrderedDataStore(request[1] .. "_Backup", DATASTORE_SECURITY_KEY)
 
                     if request[2] == REQUEST_TYPES.GET then
                         response = {
@@ -213,9 +183,8 @@ spawn(
                                                 dataStoreBackup:SetAsync(timesChanged, oldData)
                                             end
 
-                                            local response = request[4](oldData)
                                             return {
-                                                response,
+                                                request[4](oldData),
                                                 timesChanged
                                             }
                                         end
@@ -228,18 +197,15 @@ spawn(
                     end
 
                     if not response[1] then
+                        print(unpack(response))
                         table.insert(queuedRequests, request)
                     else
-                        request[6] = response[2]
-                        request[5] = true
+                        request[5]:Fire(response[2])
                     end
                 end
             end
 
-            if os.time() > timeSinceLastYield then
-                wait(1)
-                timeSinceLastYield = os.time() + 1
-            end
+            wait(1)
         end
     end
 )
