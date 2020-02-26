@@ -4,10 +4,12 @@
 ]]
 
 local Core = require(script.Parent.Core)
+local Get = Core.Utilities.Get
 local LocalDataManager = Core.LocalDataManager
 local t = Core.t
 
 local UsersLocalData = LocalDataManager:Get("Users")
+local Players = Get("Players")
 
 local usersCached = setmetatable({}, {__index = "k"})
 
@@ -34,7 +36,7 @@ function User.new(Player)
         {
             _instance = Player,
             _roamingData = {},
-            _localData = UsersLocalData:GetAsync(Player.userId):expect() or {}
+            _localData = UsersLocalData:Get(Player.userId):expect() or {}
         },
         User
     )
