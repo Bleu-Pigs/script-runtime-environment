@@ -46,4 +46,105 @@ local new = Instance.new
     end
 end
 
+do
+    local Connection = {prototype = {}}
+    Connection.__index = Connection.prototype
+
+    function Connection.new(signal, callback)
+        local self = setmetatable(
+            {
+                _connected = true,
+                _callback = nil,
+                _signal = signal
+            },
+            Connection
+        )
+
+        local function fixedCallback(...)
+            if self._connected then
+                return callback(...)
+            end
+
+            return error(
+                "this connection is broken",
+                2
+            )
+        end
+        self._callback = fixedCallback
+
+        signal._connections[callback] = self
+        return self
+    end
+
+    function Connection.prototype:Disconnect()
+        self._connected = false
+        self._signal._connections[self._callback] = nil
+    end
+
+    local Event = {prototype = {}}
+    Event.__index = Event.prototype
+
+    function Event.new(signal)
+        local self = setmetatable(
+            {
+                _signal = signal
+            },
+            Event
+        )
+
+        return self
+    end
+
+    function Event.prototype:Connect(callback)
+        return Connection.new(self._signal, callback)
+    end
+
+    function Event.prototype:Wait()
+        table.insert(
+            self._signal._waiting,
+            coroutine.running()
+        )
+
+        return coroutine.yield()
+    end
+
+    local Signal = {prototype = {}}
+    Signal.__index = Signal.prototype
+
+    function Signal.new()
+        local self = setmetatable(
+            {
+                _connections = {},
+                _waiting = setmetatable({}, {__mode = "v"})
+            },
+            Signal
+        )
+        self.Event = Event.new(self)
+
+        return self
+    end
+
+    function Signal.prototype:Fire(...)
+        for callback in next, self._callbacks do
+            coroutine.resume(coroutine.create(callback), ...)
+        end
+        for _, waitingThread in next, self._waiting do
+            coroutine.resume(waitingThread, ...)
+        end
+    end
+
+    function Signal.prototype:Destroy()
+        for index, connection in next, self._connections do
+            connection:Disconnect()
+            self._connections[index] = nil
+        end
+        for index in next, self._waiting do
+            self._waiting[index] = nil
+        end
+        for index in next, self do
+            self[index] = nil
+        end
+    end
+end
+
 return Utilities
