@@ -11,17 +11,10 @@ local Get = Core.Utilities.Get
 local Create = Core.Utilities.Create
 local t = Core.t
 local Promise = Core.Promise
-
-local function printf(message, ...)
-    return print(
-        string.format(
-            message,
-            ...
-        )
-    )
-end
+local Logger = Core.Logger
 
 local DataStoreService = Get("DataStoreService")
+local MessagingService = Get("MessagingService")
 
 local REQUESTS = {
     Get = newproxy(),
@@ -34,110 +27,81 @@ local DATASTORE_SCOPE = "insert some security key here"
 
 local ManagedLocalData = {prototype = {}}
 ManagedLocalData.__index = ManagedLocalData.prototype
-local activelyManagedLocalData = {}
-local notUpdatedYet = {}
+local activeManagedLocalData = {}
 
 function ManagedLocalData.new(name)
-    assert(
+    Logger.assert(
         t.string(name),
-        string.format(
-            "bad argument #1 (expecting string, got %s)",
-            typeof(name)
-        )
+        "bad argument #1 (expecting string, got %s)",
+        typeof(name)
     )
 
     local self = setmetatable(
         {
-            _dataStoreName = name,
-            _dataBuffer = {},
-            _dataUpdateCallbacks = {}
+            _dataStore = DataStoreService:GetDataStore(name, DATASTORE_SCOPE),
+            _dataBuffer = {}
         },
         ManagedLocalData
     )
 
-    activelyManagedLocalData[name] = self
+    activeManagedLocalData[name] = self
     return self
 end
 
 function ManagedLocalData.prototype:Get(index)
-    return Promise.async(
-        function(resolve, reject)
-            local value = self._dataBuffer[index]
-            if t.table(value) then
-                return resolve(value[1])
-            end
-            -- data isn't in cache, let's try to retrieve it
+    local value = self._dataBuffer[index]
+    if t.table(value) then
+        Logger.debugf(
+            "retrieved %s from dataBuffer\n%s",
+            tostring(index),
+            tostring(value)
+        )
+        return value[1]
+    end
 
-            local dataStore = DataStoreService:GetDataStore(
-                self._dataStoreName .."??".. index,
-                DATASTORE_SCOPE
-            )
-            local backupDataStore = DataStoreService:GetOrderedDataStore(
-                self._dataStoreName .."??".. index .."!!BACKUP",
-                DATASTORE_SCOPE
-            )
+    -- data isn't in cache, let's try to retrieve it
+    Logger.debugf(
+        "%s is not cached locally, retrieving from DataStore %s",
+        tostring(index),
+        self._dataStore.Name
+    )
 
-            for _ = 1, 10 do
-                printf(
-                    "attempting to retrieve %s",
-                    index
-                )
-                if pcall(
-                    function()
-                        -- first, let's get the last known entry from backup
-                        local lastKnown = backupDataStore:GetSortedAsync(false, 1):GetCurrentPage()
-                        if t.table(lastKnown) and t.number(lastKnown[2]) then
-                            -- got it!
-                            lastKnown = lastKnown[2]
-                            printf(
-                                "received timestamp %s from backup",
-                                lastKnown
-                            )
-                            -- let's retrieve it from the actual DataStore
-                            value = dataStore:GetAsync(lastKnown)
-                            printf(
-                                "retrieved value %s from DataStore",
-                                tostring(value)
-                            )
-                        else
-                            printf("couldnt find entry in backup!")
-                            table.foreach(lastKnown, printf)
-                        end
-                    end
-                ) then
-                    -- successfully retrieved data
-                    self._dataBuffer[index] = {
-                        value,
-                        true
-                    }
-                    printf(
-                        "saved value %s to index %s in dataBuffer",
-                        tostring(value),
+    for _ = 1, 10 do
+        if pcall(
+            function()
+                    Logger.debugf(
+                        "retrieving to retrieve %s from DataStore",
                         tostring(index)
                     )
-                    return resolve(value)
-                end
-
-                -- otherwise, try again after waiting a bit
-                wait(1)
+                    value = self._dataStore:GetAsync(index)
+                -- end
             end
-
-            -- if we failed to retrieve it after 10 times, throw an error
-            reject("failed to resolve after 10 attempts")
+        ) then
+            Logger.debugf(
+                "saving %s to dataBuffer",
+                tostring(value)
+            )
+            self._dataBuffer[index] = {
+                value,
+                true
+            }
+            return value
         end
-    )
+
+        wait(1)
+    end
 end
 
 function ManagedLocalData.prototype:Set(index, value)
-    if t.table(self._dataBuffer[index]) then
-        self._dataBuffer[index][1] = value
-        self._dataBuffer[index][2] = false
-    else
-        self._dataBuffer[index] = {
-            value,
-            false
-        }
-    end
+    Logger.assert(
+        t.any(index),
+        "bad argument #1 (cannot be nil)"
+    )
+    
+    self._dataBuffer[index] = {
+        value,
+        false
+    }
 
     return value
 end
@@ -145,59 +109,40 @@ end
 spawn(
     function()
         while true do
-            for _, ManagedLocalData in pairs(activelyManagedLocalData) do
+            for _, ManagedLocalData in pairs(activeManagedLocalData) do
                 for index, value in pairs(ManagedLocalData._dataBuffer) do
                     if not value[2] then
-                        local dataStore = DataStoreService:GetDataStore(
-                            ManagedLocalData._dataStoreName .."??".. index,
-                            DATASTORE_SCOPE
-                        )
-                        local backupDataStore = DataStoreService:GetOrderedDataStore(
-                            ManagedLocalData._dataStoreName .."??".. index .."!!BACKUP",
-                            DATASTORE_SCOPE
+                        Logger.debugf(
+                            "%s has yet to been saved",
+                            tostring(index)
                         )
 
                         Promise.async(
                             function(resolve)
-                                resolve(backupDataStore:GetSortedAsync(false, 1):GetCurrentPage())
-                            end
-                        ):andThen(
-                            function(mostRecentEntry)
-                                local timesSaved = 1
-                                if t.table(mostRecentEntry) and t.number(mostRecentEntry[1]) then
-                                    timesSaved = mostRecentEntry[1] + 1
+                                if value[1] == nil then
+                                    ManagedLocalData._dataStore:RemoveAsync(index)
+                                else
+                                    ManagedLocalData._dataStore:UpdateAsync(
+                                        index,
+                                        function()
+                                            return value[1]
+                                        end
+                                    )
                                 end
-                                local timeSavedAt = os.time()
 
-                                return Promise.async(
-                                    function(resolve, reject)
-                                        backupDataStore:SetAsync(
-                                            timesSaved,
-                                            timeSavedAt
-                                        )
-                                        dataStore:SetAsync(
-                                            timeSavedAt,
-                                            value[1]
-                                        )
-
-                                        resolve()
-                                    end
-                                ):andThen(
-                                    function()
-                                        printf(
-                                            "saved %s successfully",
-                                            index
-                                        )
-
-                                        value[2] = true
-                                    end
+                                Logger.debugf(
+                                    "saved %s successfully",
+                                    index
                                 )
+
+                                value[2] = true
+                                resolve()
                             end
                         ):catch(
                             function(fatal)
-                                printf(
+                                Logger.errorf(
                                     "%s failed\n%s",
-                                    index,
+                                    tostring(index),
                                     fatal
                                 )
 
@@ -216,13 +161,13 @@ spawn(
 local LocalDataManager = {}
 
 function LocalDataManager:Get(name)
-    assert(
+    Logger.assert(
         self == LocalDataManager,
         "expecting ':', not '.' when calling method Get"
     )
 
-    if activelyManagedLocalData[name] then
-        return activelyManagedLocalData[name]
+    if activeManagedLocalData[name] then
+        return activeManagedLocalData[name]
     end
 
     return ManagedLocalData.new(name)

@@ -36,7 +36,7 @@ function User.new(Player)
         {
             _instance = Player,
             _roamingData = {},
-            _localData = UsersLocalData:Get(Player.userId):expect() or {}
+            _localData = UsersLocalData:Get(Player.userId) or {}
         },
         User
     )
@@ -87,5 +87,18 @@ function UsersManager:Get(Player)
 
     return User.new(Player)
 end
+
+Players.PlayerAdded:connect(
+    function(newPlayer)
+        local newUser = UsersManager:Get(newPlayer)
+    end
+)
+Players.PlayerRemoving:connect(
+    function(leavingPlayer)
+        local leavingUser = UsersManager:Get(leavingPlayer)
+        UsersLocalData:Set(leavingUser:GetPlayer().userId, leavingUser._localData)
+    end
+)
+
 
 return UsersManager

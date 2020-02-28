@@ -4,12 +4,20 @@ local t = require(script.Parent:WaitForChild("t"))
 do
     local cache = setmetatable({}, {__mode = "v"})
     function Utilities.Get(Name, BeginAt)
+        assert(
+            t.string(Name),
+            string.format(
+                "bad argument #1 (expecting string, got %s)",
+                typeof(Name)
+            )
+        )
+
         if cache[Name] then
             return cache[Name]
         end
 
         assert(t.string(Name), "Expecting string, got ".. typeof(Name))
-        if not t.Instance(BeginAt) then 
+        if not t.Instance(BeginAt) then
             BeginAt = game
         end
 
@@ -50,32 +58,6 @@ do
     local Connection = {prototype = {}}
     Connection.__index = Connection.prototype
 
-    function Connection.new(signal, callback)
-        local self = setmetatable(
-            {
-                _connected = true,
-                _callback = nil,
-                _signal = signal
-            },
-            Connection
-        )
-
-        local function fixedCallback(...)
-            if self._connected then
-                return callback(...)
-            end
-
-            return error(
-                "this connection is broken",
-                2
-            )
-        end
-        self._callback = fixedCallback
-
-        signal._connections[callback] = self
-        return self
-    end
-
     function Connection.prototype:Disconnect()
         self._connected = false
         self._signal._connections[self._callback] = nil
@@ -96,7 +78,29 @@ do
     end
 
     function Event.prototype:Connect(callback)
-        return Connection.new(self._signal, callback)
+        local Connection = setmetatable(
+            {
+                _connected = true,
+                _callback = nil,
+                _signal = self
+            },
+            Connection
+        )
+
+        local function fixedCallback(...)
+            if Connection._connected then
+                return callback(...)
+            end
+
+            return error(
+                "this connection is broken",
+                2
+            )
+        end
+        Connection._callback = fixedCallback
+
+        self._signal._connections[fixedCallback] = self
+        return Connection
     end
 
     function Event.prototype:Wait()
@@ -125,7 +129,7 @@ do
     end
 
     function Signal.prototype:Fire(...)
-        for callback in next, self._callbacks do
+        for callback in next, self._connections do
             coroutine.resume(coroutine.create(callback), ...)
         end
         for _, waitingThread in next, self._waiting do
@@ -145,6 +149,8 @@ do
             self[index] = nil
         end
     end
+
+    Utilities.CreateSignal = Signal.new
 end
 
 return Utilities
