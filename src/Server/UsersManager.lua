@@ -3,9 +3,13 @@
     - Create unified data management between Local and Roaming data profiles
 ]]
 
-local Core = require(script.Parent.Core)
-local Get = Core.Utilities.Get
-local LocalDataManager = Core.LocalDataManager
+local Core = require(script.Parent)
+local Utilities = Core.Utilities
+local Create = Utilities.Create
+local CreateSignal = Utilities.CreateSignal 
+local Get = Utilities.Get
+local Logger = Core.Logger
+local Promise = Core.Promise
 local t = Core.t
 
 local UsersLocalData = LocalDataManager:Get("Users")
@@ -88,17 +92,24 @@ function UsersManager:Get(Player)
     return User.new(Player)
 end
 
-Players.PlayerAdded:connect(
-    function(newPlayer)
-        local newUser = UsersManager:Get(newPlayer)
-    end
-)
-Players.PlayerRemoving:connect(
-    function(leavingPlayer)
-        local leavingUser = UsersManager:Get(leavingPlayer)
-        UsersLocalData:Set(leavingUser:GetPlayer().userId, leavingUser._localData)
-    end
-)
+do
+    UsersManager._playerJoinedSignal = CreateSignal()
+    UsersManager.PlayerJoined = UsersManager._playerJoinedSignal.Event 
+    UsersManager._playerLeftSignal = CreateSignal()
+    UsersManager.PlayerLeft = UsersManager._playerLeftSignal.Event
 
+    Players.PlayerAdded:connect(
+        function(newPlayer)
+            UsersManager._playerJoinedSignal:Fire(UsersManager:Get(newPlayer))
+        end
+    )
+    Players.PlayerRemoving:connect(
+        function(leavingPlayer)
+            local leaving = UsersManager:Get(leavingPlayer)
+            UsersLocalData:Set(leaving.userId, leaving._localData)
+            UsersManager._playerLeftSignal:Fire(leaving)
+        end
+    )
+end
 
 return UsersManager
