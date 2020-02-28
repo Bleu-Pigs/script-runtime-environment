@@ -1,289 +1,176 @@
-local Utilities = require(script.Parent.Core.Utilities)
-local Create = Utilities.Create
-local Get = Utilities.Get
-local Promise = require(script.Parent.Core.Promises)
-local t = require(script.Parent.Core.t)
+--[[
+
+- Adaptable soft limit based on numOfPlayers with hard limit of 20
+- Automatic retries up to set limit
+- Data buffer to reduce impact on request budget
+
+]]
+
+local Core = require(script.Parent.Core)
+local Get = Core.Utilities.Get
+local Create = Core.Utilities.Create
+local t = Core.t
+local Promise = Core.Promise
+local Logger = Core.Logger
 
 local DataStoreService = Get("DataStoreService")
-local RunService = Get("RunService")
+local MessagingService = Get("MessagingService")
 
-local DATASTORE_SECURITY_KEY = "some random key here"
-local REQUEST_TYPES = {
-    GET = newproxy(),
-    SET = newproxy(),
-    UPDATE = newproxy(),
-    ONUPDATE = newproxy()
+local REQUESTS = {
+    Get = newproxy(),
+    Set = newproxy(),
+    Update = newproxy(),
+    OnUpdate = newproxy()
 }
+local DATASTORE_SCOPE = "insert some security key here"
+
 
 local ManagedLocalData = {prototype = {}}
 ManagedLocalData.__index = ManagedLocalData.prototype
+local activeManagedLocalData = {}
 
+function ManagedLocalData.new(name)
+    Logger.assert(
+        t.string(name),
+        "bad argument #1 (expecting string, got %s)",
+        typeof(name)
+    )
 
-local managedDataStores = {}
-local queuedRequests = {}
-
-function ManagedLocalData.new(Name)
     local self = setmetatable(
         {
-            _dataStoreName = Name,
+            _dataStore = DataStoreService:GetDataStore(name, DATASTORE_SCOPE),
             _dataBuffer = {}
         },
         ManagedLocalData
     )
-    managedDataStores[Name] = self
 
+    activeManagedLocalData[name] = self
     return self
 end
 
-local QueuedRequest = {}
-function QueuedRequest.new(DataStoreName, RequestType, Index, Value)
-    assert(
-        t.string(DataStoreName),
-        string.format(
-            "bad argument #1 (expecting string, got %s)",
-            typeof(DataStoreName)
+function ManagedLocalData.prototype:Get(index)
+    local value = self._dataBuffer[index]
+    if t.table(value) then
+        Logger.debugf(
+            "retrieved %s from dataBuffer\n%s",
+            tostring(index),
+            tostring(value)
         )
-    )
-    assert(
-        t.literal(
-            REQUEST_TYPES.GET,
-            REQUEST_TYPES.SET,
-            REQUEST_TYPES.UPDATE,
-            REQUEST_TYPES.ONUPDATE
-        )(RequestType),
-        string.format(
-            "bad argument #2 (expecting REQUEST_TYPES Enum, got %s)",
-            typeof(RequestType)
-        )
-    )
-    assert(
-        t.string(Index),
-        string.format(
-            "bad argument #3 (expecting string, got %s)",
-            typeof(Index)
-        )
+        return value[1]
+    end
+
+    -- data isn't in cache, let's try to retrieve it
+    Logger.debugf(
+        "%s is not cached locally, retrieving from DataStore %s",
+        tostring(index),
+        self._dataStore.Name
     )
 
-    local request = {
-        DataStoreName,
-        RequestType,
-        Index,
-        Value,
-        false,
-        nil,
-        0
+    for _ = 1, 10 do
+        if pcall(
+            function()
+                    Logger.debugf(
+                        "retrieving to retrieve %s from DataStore",
+                        tostring(index)
+                    )
+                    value = self._dataStore:GetAsync(index)
+                -- end
+            end
+        ) then
+            Logger.debugf(
+                "saving %s to dataBuffer",
+                tostring(value)
+            )
+            self._dataBuffer[index] = {
+                value,
+                true
+            }
+            return value
+        end
+
+        wait(1)
+    end
+end
+
+function ManagedLocalData.prototype:Set(index, value)
+    Logger.assert(
+        t.any(index),
+        "bad argument #1 (cannot be nil)"
+    )
+    
+    self._dataBuffer[index] = {
+        value,
+        false
     }
 
-    return Promise.async(
-        function(resolve, reject, onCancel)
-            local isCancelled
-            onCancel(
-                function()
-                    table.remove(
-                        queuedRequests,
-                        table.find(
-                            queuedRequests,
-                            request
-                        )
-                    )
-                    isCancelled = true
-                end
-            )
-
-            local timeStarted = os.time() + 30
-            while not isCancelled do
-                if os.time() > timeStarted then
-                    table.remove(
-                        queuedRequests,
-                        table.find(
-                            queuedRequests,
-                            request
-                        )
-                    )
-                    reject(
-                        "The request was not processed in a timely manner"
-                    )
-                else
-                    if request[5] then
-                        resolve(request[6])
-                        return
-                    end
-                    wait(1)
-                end
-            end
-        end
-    )
-end
-
-function ManagedLocalData.prototype:GetAsync(Index)
-    assert(
-        t.string(Index),
-        string.format(
-            "bad argument #1 (expecting string, got %s)",
-            typeof(Index)
-        )
-    )
-
-    return QueuedRequest.new(self._dataStore, REQUEST_TYPES.GET, Index)
-end
-
-function ManagedLocalData.prototype:SetAsync(Index, Value)
-    assert(
-        t.string(Index),
-        string.format(
-            "bad argument #1 (expecting string, got %s)",
-            typeof(Index)
-        )
-    )
-
-    return QueuedRequest.new(self._dataStore, REQUEST_TYPES.GET, Index, Value)
-end
-
-function ManagedLocalData.prototype:UpdateAsync(Index, Callback)
-    assert(
-        t.string(Index),
-        string.format(
-            "bad argument #1 (expecting string, got %s)",
-            typeof(Index)
-        )
-    )
-    assert(
-        t.callback(Callback),
-        string.format(
-            "bad argument #1 (expecting function, got %s)",
-            typeof(Callback)
-        )
-    )
-
-    return QueuedRequest.new(self._dataStore, REQUEST_TYPES.GET, Index, Callback)
-end
-
-function ManagedLocalData.prototype:OnUpdate(Index, Callback)
-    assert(
-        t.string(Index),
-        string.format(
-            "bad argument #1 (expecting string, got %s)",
-            typeof(Index)
-        )
-    )
-    assert(
-        t.callback(Callback),
-        string.format(
-            "bad argument #1 (expecting function, got %s)",
-            typeof(Callback)
-        )
-    )
-
-    return QueuedRequest.new(self._dataStore, self._dataStoreBackup, REQUEST_TYPES.GET, Index, Callback)
+    return value
 end
 
 spawn(
     function()
-        -- TODO: implement OnClose handler logic
-        local request, response
-        local dataStore, dataStoreBackup
         while true do
-            if #queuedRequests > 0 then
-                request = table.remove(queuedRequests, 1)
+            for _, ManagedLocalData in pairs(activeManagedLocalData) do
+                for index, value in pairs(ManagedLocalData._dataBuffer) do
+                    if not value[2] then
+                        Logger.debugf(
+                            "%s has yet to been saved",
+                            tostring(index)
+                        )
 
-                if request[7] > 3 then
-                    request[6] = "request failed more than 3 times"
-                    request[5] = true
-                else
-                    dataStore = DataStoreService:GetDataStore(request[1], DATASTORE_SECURITY_KEY)
-                    dataStoreBackup = DataStoreService:GetOrderedDataStore(request[1] .. "_Backup", DATASTORE_SECURITY_KEY)
-
-                    if request[2] == REQUEST_TYPES.GET then
-                        response = {
-                            pcall(
-                                function()
-                                    local response = dataStore:GetAsync(request[3])
-                                    if t.table(response) then
-                                        return response[2]
-                                    end
-                                end
-                            )
-                        }
-                    elseif request[2] == REQUEST_TYPES.SET then
-                        response = {
-                            pcall(
-                                function()
-                                    dataStore:UpdateAsync(
-                                        request[3],
-                                        function(oldData)
-                                            local timesChanged = 1
-                                            dataStoreBackup = DataStoreService:GetOrderedDataStore(request[3] .."_".. request[3] .."_Backup")
-
-                                            if t.table(oldData) and t.number(oldData[2]) then
-                                                timesChanged = oldData[2] + 1
-                                                dataStoreBackup:SetAsync(timesChanged, oldData)
-                                            end
-
-                                            return {
-                                                request[4],
-                                                timesChanged
-                                            }
-                                        end
-                                    )
-
-                                    return request[4]
-                                end
-                            )
-                        }
-                    elseif request[2] == REQUEST_TYPES.UPDATE then
-                        response = {
-                            pcall(
-                                function()
-                                    return dataStore:UpdateAsync(
-                                        request[3],
-                                        function(oldData)
-                                            local timesChanged = 1
-                                            dataStoreBackup = DataStoreService:GetOrderedDataStore(request[3] .."_".. request[3] .."_Backup")
-                                            
-                                            if t.table(oldData) and t.number(oldData[2]) then
-                                                timesChanged = oldData[2] + 1
-                                                dataStoreBackup:SetAsync(timesChanged, oldData)
-                                            end
-
-                                            return request[4](oldData)
+                        Promise.async(
+                            function(resolve)
+                                if value[1] == nil then
+                                    ManagedLocalData._dataStore:RemoveAsync(index)
+                                else
+                                    ManagedLocalData._dataStore:UpdateAsync(
+                                        index,
+                                        function()
+                                            return value[1]
                                         end
                                     )
                                 end
-                            )
-                        }
-                    elseif request[2] == REQUEST_TYPES.ONUPDATE then
-                        response = {pcall(request[1].OnUpdate, request[1], request[3], request[4])}
-                    end
 
-                    if not response[1] then
-                        table.insert(queuedRequests, request)
-                    else
-                        request[6] = response[2]
-                        request[5] = true
+                                Logger.debugf(
+                                    "saved %s successfully",
+                                    index
+                                )
+
+                                value[2] = true
+                                resolve()
+                            end
+                        ):catch(
+                            function(fatal)
+                                Logger.errorf(
+                                    "%s failed\n%s",
+                                    tostring(index),
+                                    fatal
+                                )
+
+                                value[2] = false
+                            end
+                        )
                     end
                 end
             end
+
+            wait(1)
         end
     end
 )
 
 local LocalDataManager = {}
 
-function LocalDataManager:Get(Name)
-    assert(t.literal(LocalDataManager)(self), "Expected ':' not '.' calling member function Get")
-    assert(
-        t.string(Name),
-        string.format(
-            "bad argument #1 (expecting string, got %s)",
-            typeof(Name)
-        )
+function LocalDataManager:Get(name)
+    Logger.assert(
+        self == LocalDataManager,
+        "expecting ':', not '.' when calling method Get"
     )
 
-    if managedDataStores[Name] then
-        return managedDataStores[Name]
+    if activeManagedLocalData[name] then
+        return activeManagedLocalData[name]
     end
 
-    return ManagedLocalData.new(Name)
+    return ManagedLocalData.new(name)
 end
 
 return LocalDataManager

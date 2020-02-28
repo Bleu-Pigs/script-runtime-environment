@@ -3,10 +3,13 @@
     - Create unified data management between Local and Roaming data profiles
 ]]
 
-local LocalDataManager = require(script.Parent.LocalDataManager)
-local t = require(script.Parent.Core.t)
+local Core = require(script.Parent.Core)
+local Get = Core.Utilities.Get
+local LocalDataManager = Core.LocalDataManager
+local t = Core.t
 
 local UsersLocalData = LocalDataManager:Get("Users")
+local Players = Get("Players")
 
 local usersCached = setmetatable({}, {__index = "k"})
 
@@ -33,7 +36,7 @@ function User.new(Player)
         {
             _instance = Player,
             _roamingData = {},
-            _localData = UsersLocalData:GetAsync(Player.userId):expect() or {}
+            _localData = UsersLocalData:Get(Player.userId) or {}
         },
         User
     )
@@ -59,11 +62,15 @@ function User.prototype:GetLocal(Index)
     return self._localData[Index]
 end
 
-local Users = {}
+function User.prototype:GetPlayer()
+    return self._instance
+end
 
-function Users:Get(Player)
+local UsersManager = {}
+
+function UsersManager:Get(Player)
     assert(
-        self == Users,
+        self == UsersManager,
         "Expected ':' not '.' calling member function Get"
     )
     assert(
@@ -80,3 +87,18 @@ function Users:Get(Player)
 
     return User.new(Player)
 end
+
+Players.PlayerAdded:connect(
+    function(newPlayer)
+        local newUser = UsersManager:Get(newPlayer)
+    end
+)
+Players.PlayerRemoving:connect(
+    function(leavingPlayer)
+        local leavingUser = UsersManager:Get(leavingPlayer)
+        UsersLocalData:Set(leavingUser:GetPlayer().userId, leavingUser._localData)
+    end
+)
+
+
+return UsersManager
